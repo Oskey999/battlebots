@@ -2,3 +2,5 @@
 
 run using python videolocalai.py
 make sure to input the video file into the script or as a run parameter
+
+use train.py to train the model
