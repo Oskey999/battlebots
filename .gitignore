@@ -1,0 +1,10 @@
+# Ignore the specific folder at repo root (escape the space)
+True\ Battlebots.v1i.yolov8-obb/
+
+# Ignore video, archive and 3D print files
+*.mp4
+*.MP4
+*.zip
+*.ZIP
+*.3mf
+*.3MF
