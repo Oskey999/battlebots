@@ -175,7 +175,7 @@ import cv2
 from pathlib import Path
 from scipy.spatial.distance import euclidean
 
-def detect_robots_in_video(input_path, output_path, min_contour_area=500, 
+def detect_robots_in_video(input_path, output_path, min_contour_area=500, max_contour_area=1000, 
                           frame_skip=10, margin=50, scale=0.3):
     """
     Detects robots in a video with static background and outputs labeled video.
@@ -191,7 +191,8 @@ def detect_robots_in_video(input_path, output_path, min_contour_area=500,
         scale (float): Scale factor for processing (0.3 = 30% of original size)
     """
     
-    cap = cv2.VideoCapture(input_path)    
+    cap = cv2.VideoCapture(input_path)   
+    # backsub =cv2.createBackgroundSubtractorMOG2() 
     if not cap.isOpened():
         print(f"Error: Could not open video {input_path}")
         return
@@ -228,25 +229,37 @@ def detect_robots_in_video(input_path, output_path, min_contour_area=500,
 
     
     frame_count = 0
+    lastframe= None
+    frames=[]
     
     while True:
         ret, frame = cap.read()
+        # frames.append(frame)
+        # median_frame= np.median(frames, axis=0).astype(dtype=np.uint8)
+        if lastframe is None:
+            lastframe=frame
         
-        if not ret:
+        if not ret:## or frame_count>1000:
             break
         
         frame_count += 1
+        # fg_mask=backsub.apply(frame)
         
         # Only process every Nth frame
         if frame_count % frame_skip != 0:
-            out.write(frame)
+            # out.write(frame)
             continue
         
+        # frameg= cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # dframeg= cv2.cvtColor(median_frame, cv2.COLOR_BGR2GRAY)
+        # diff=cv2.absdiff(frameg,dframeg)
+
         # Downscale frame for faster processing
         small_frame = cv2.resize(frame, (scaled_width, scaled_height))
         
         # Apply background subtraction
         fg_mask = bg_subtractor.apply(small_frame)
+        # fg_mask=backsub.apply(frame)
         
         # Apply morphological operations to clean up
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel, iterations=2)
@@ -259,7 +272,7 @@ def detect_robots_in_video(input_path, output_path, min_contour_area=500,
         detections = []
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area > min_contour_area:
+            if area > min_contour_area and area<max_contour_area:
                 x, y, w, h = cv2.boundingRect(contour)
                 
                 # Check if object is within the valid region (not on outskirts)
@@ -281,93 +294,94 @@ def detect_robots_in_video(input_path, output_path, min_contour_area=500,
                         'robot_id': None
                     })
         
+        detections.sort(key=lambda d: d["area"])
         # Match detections to known robots
         matched_ids = set()
-        
-        for detection in detections:
-            best_match_id = None
-            best_match_score = -1
+        print(f"on frame: {frame_count} found {len(detections)} robots", end='\r')
+        # for detection in detections:
+        #     best_match_id = None
+        #     best_match_score = -1
             
-            cx, cy = detection['center']
+        #     cx, cy = detection['center']
             
-            # Compare with each known robot template using feature matching
-            for robot_id, robot_data in robot_templates.items():
-                if robot_id in matched_ids:
-                    continue  # Skip already matched robots
+        #     # Compare with each known robot template using feature matching
+        #     for robot_id, robot_data in robot_templates.items():
+        #         if robot_id in matched_ids:
+        #             continue  # Skip already matched robots
                 
-                # Calculate distance between current detection and last known position
-                last_cx, last_cy = robot_data['center']
-                distance = np.sqrt((cx - last_cx)**2 + (cy - last_cy)**2)
+        #         # Calculate distance between current detection and last known position
+        #         last_cx, last_cy = robot_data['center']
+        #         distance = np.sqrt((cx - last_cx)**2 + (cy - last_cy)**2)
                 
-                # Use ORB feature matching for rotation-invariant comparison
-                sx, sy, sw, sh = detection['small_bbox']
-                roi = detection['small_frame'][sy:sy+sh, sx:sx+sw].copy()
+        #         # Use ORB feature matching for rotation-invariant comparison
+        #         sx, sy, sw, sh = detection['small_bbox']
+        #         roi = detection['small_frame'][sy:sy+sh, sx:sx+sw].copy()
                 
-                # Compute features for current detection
-                kp_current, desc_current = orb.detectAndCompute(roi, None)
+        #         # Compute features for current detection
+        #         kp_current, desc_current = orb.detectAndCompute(roi, None)
                 
-                feature_score = 0
-                if robot_data['desc'] is not None and desc_current is not None and len(kp_current) > 0:
-                    # Use BFMatcher for feature matching
-                    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-                    matches = bf.match(robot_data['desc'], desc_current)
+        #         feature_score = 0
+        #         if robot_data['desc'] is not None and desc_current is not None and len(kp_current) > 0:
+        #             # Use BFMatcher for feature matching
+        #             bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        #             matches = bf.match(robot_data['desc'], desc_current)
                     
-                    # Score based on number of good matches (normalized)
-                    feature_score = len(matches) / max(len(robot_data['kp']), len(kp_current) + 1e-6)
+        #             # Score based on number of good matches (normalized)
+        #             feature_score = len(matches) / max(len(robot_data['kp']), len(kp_current) + 1e-6)
                 
-                # Combine distance and feature matching
-                # Prefer closer robots, but allow features to override if very different
-                match_score = feature_score - (distance / 100.0)  # Distance less dominant
+        #         # Combine distance and feature matching
+        #         # Prefer closer robots, but allow features to override if very different
+        #         match_score = feature_score - (distance / 100.0)  # Distance less dominant
                 
-                if match_score > best_match_score:
-                    best_match_score = match_score
-                    best_match_id = robot_id
+        #         if match_score > best_match_score:
+        #             best_match_score = match_score
+        #             best_match_id = robot_id
             
-            # If no good match found, create new robot ID
-            if best_match_id is None and len(robot_templates) < 10:  # Limit to 10 robots
-                best_match_id = len(robot_templates) + 1
+        #     # If no good match found, create new robot ID
+        #     if best_match_id is None and len(robot_templates) < 10:  # Limit to 10 robots
+        #         best_match_id = len(robot_templates) + 1
             
-            # Always insert/update robot data if we have a valid ID
-            if best_match_id is not None:
-                detection['robot_id'] = best_match_id
-                matched_ids.add(best_match_id)
+        #     # Always insert/update robot data if we have a valid ID
+        #     if best_match_id is not None:
+        #         detection['robot_id'] = best_match_id
+        #         matched_ids.add(best_match_id)
                 
-                # Extract and store features and position for this robot
-                sx, sy, sw, sh = detection['small_bbox']
-                roi = detection['small_frame'][sy:sy+sh, sx:sx+sw].copy()
+        #         # Extract and store features and position for this robot
+        #         sx, sy, sw, sh = detection['small_bbox']
+        #         roi = detection['small_frame'][sy:sy+sh, sx:sx+sw].copy()
                 
-                # Enhance contrast to ensure feature detection
-                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-                roi_enhanced = clahe.apply(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)) if len(roi.shape) == 3 else clahe.apply(roi)
+        #         # Enhance contrast to ensure feature detection
+        #         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        #         roi_enhanced = clahe.apply(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)) if len(roi.shape) == 3 else clahe.apply(roi)
                 
-                # Try SIFT first, fall back to ORB
-                if use_sift:
-                    kp, desc = sift.detectAndCompute(roi_enhanced, None)
-                else:
-                    kp, desc = orb.detectAndCompute(roi_enhanced, None)
+        #         # Try SIFT first, fall back to ORB
+        #         if use_sift:
+        #             kp, desc = sift.detectAndCompute(roi_enhanced, None)
+        #         else:
+        #             kp, desc = orb.detectAndCompute(roi_enhanced, None)
                 
-                # If still None, create dummy descriptors to avoid crashes
-                if kp is None:
-                    kp = []
-                if desc is None:
-                    # Create a minimal descriptor array to avoid None issues
-                    desc = np.array([], dtype=np.float32).reshape(0, 128 if use_sift else 32)
+        #         # If still None, create dummy descriptors to avoid crashes
+        #         if kp is None:
+        #             kp = []
+        #         if desc is None:
+        #             # Create a minimal descriptor array to avoid None issues
+        #             desc = np.array([], dtype=np.float32).reshape(0, 128 if use_sift else 32)
                 
-                robot_templates[best_match_id] = {
-                    'kp': kp,
-                    'desc': desc,
-                    'center': detection['center']
-                }
+        #         robot_templates[best_match_id] = {
+        #             'kp': kp,
+        #             'desc': desc,
+        #             'center': detection['center']
+        #         }
         
-        # Sort by robot ID for consistent ordering
-        detections.sort(key=lambda d: d['robot_id'] if d['robot_id'] is not None else float('inf'))
+        # # Sort by robot ID for consistent ordering
+        # detections.sort(key=lambda d: d['robot_id'] if d['robot_id'] is not None else float('inf'))
         
         # Draw bounding boxes and labels on frame
         for detection in detections:
-            if detection['robot_id'] is not None:
+            if detection['robot_id'] is None:
                 x, y, w, h = detection['bbox']
                 cx, cy = detection['center']
-                robot_id = detection['robot_id']
+                robot_id = detection['area']
                 
                 # Draw bounding box
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -391,6 +405,7 @@ def detect_robots_in_video(input_path, output_path, min_contour_area=500,
         
         # Write frame to output video
         out.write(frame)
+        lastframe=frame
     
     # Release resources
     cap.release()
@@ -399,9 +414,9 @@ def detect_robots_in_video(input_path, output_path, min_contour_area=500,
 
 if __name__ == "__main__":
     # Example usage
-    input_video = "BZ-nhrl_dec25_3lb-pinevictus-silentspring-W-11-Cage-2-Overhead-High.mp4"
-    output_video = "output_robots_labeled3.mp4"
+    input_video = "BZ-nhrl_dec25_3lb-projectliftoff3-jackalope-470f-Cage-6-Overhead-High.mp4"
+    output_video = input_video+"output_robots_labeled3.mp4"
     
     # Process every 10th frame at 30% resolution, ignore edges
-    detect_robots_in_video(input_video, output_video, min_contour_area=280, 
-                          frame_skip=1, margin=50, scale=0.3)
+    detect_robots_in_video(input_video, output_video, min_contour_area=1220,max_contour_area=50000, 
+                          frame_skip=10, margin=50, scale=0.3)

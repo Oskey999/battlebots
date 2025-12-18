@@ -14,6 +14,9 @@ import pickle
 import os
 import time
 
+CONFIDENCE = 0.8
+BOTS_EXPECTED = 2
+
 def get_centroid(box_coords):
     """Calculate centroid of bounding box."""
     x1, y1, x2, y2 = box_coords
@@ -107,8 +110,8 @@ class RobotTracker:
             template_gray = cv2.cvtColor(template_resized, cv2.COLOR_BGR2GRAY) if len(template_resized.shape) == 3 else template_resized
             
             # Calculate weighted average color density
-            # detection_weighted_density = np.average(detection_gray, weights=weight_map)
-            # template_weighted_density = np.average(template_gray, weights=weight_map)
+            detection_weighted_density = np.average(detection_gray, weights=weight_map)
+            template_weighted_density = np.average(template_gray, weights=weight_map)
             detection_weighted_densityb = np.average(detection_crop[:, :, 0], weights=weight_map)
             template_weighted_densityb = np.average(template_resized[:, :, 0], weights=weight_map)
             detection_weighted_densityg = np.average(detection_crop[:, :, 1], weights=weight_map)
@@ -121,11 +124,11 @@ class RobotTracker:
             color_density_diffg = 1.0 - (abs(detection_weighted_densityg - template_weighted_densityg) / 255.0)
             color_density_diffr = 1.0 - (abs(detection_weighted_densityr - template_weighted_densityr) / 255.0)
             color_density_diff = (color_density_diffb + color_density_diffg + color_density_diffr) / 3.0
+            bw_diff= 1.0 - (abs(detection_weighted_density - template_weighted_density) / 255.0)
             
             # Combine scores: 80% feature matching, 20% color density
             # Feature matching is heavily weighted
-            combined_score = (0.6 * feature_match_score) + (0.4 * color_density_diff)
-            
+            combined_score = (0.6 * feature_match_score) + (0.3 * color_density_diff)+(0.1* bw_diff* bw_diff)
             if combined_score > best_match_score:
                 best_match_score = combined_score
                 best_match_id = robot_id
@@ -158,9 +161,11 @@ class RobotTracker:
         return closest_id
     
     def update(self, detections, frame, model=None):
-        """Update tracker with new detections."""
+        """Update tracker with detections."""
+        global CONFIDENCE
         self.frame_count += 1
         matched_ids = set()
+        # num_bots=0
         
         for box in detections.boxes:
             # Scale coordinates back to full resolution
@@ -184,6 +189,7 @@ class RobotTracker:
             if detection_crop.size == 0:
                 continue
             
+            # num_bots+=1
             # Try to match with existing templates - prioritize template match
             template_match_id,score = self.match_template(frame, detection_crop, [x1, y1, x2, y2])
             
@@ -206,10 +212,13 @@ class RobotTracker:
             
             # Update template periodically
             if robot_id not in self.robot_templates or \
-               (self.frame_count % self.template_update_interval == 0 and score>0.38):
+               (self.frame_count % self.template_update_interval == 0 and score>0.4):
                 self.robot_templates[robot_id] = detection_crop.copy()
                 # Save template to disk
                 self.save_template(robot_id, detection_crop)
+        
+        # CONFIDENCE+=(num_bots-BOTS_EXPECTED)*0.05
+        # print(f"Adjusted confidence to {CONFIDENCE:.2f} based on {num_bots} bots detected")
         
         return matched_ids
     
@@ -297,10 +306,17 @@ def process_video_with_detection(input_video_path, output_video_path, model_path
                     print(f"Inference error on frame {frame_count}: {e}")
                     last_detections = None
             
+            numbots=0
             # Draw detections on full-resolution frame
             if last_detections is not None:
                 detection_idx = 0
+                
+                
                 for box in last_detections.boxes:
+                    cls_id = int(box.cls[0])
+                    cls_name = model.names[cls_id] if model else None
+                    if cls_name or cls_name.lower() == "robot":
+                        numbots+=1
                     # Scale coordinates back to original resolution
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                     x1, y1, x2, y2 = int(x1 / scale_factor), int(y1 / scale_factor), \
@@ -335,6 +351,9 @@ def process_video_with_detection(input_video_path, output_video_path, model_path
                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
                     
                     detection_idx += 1
+            if (frame_count - 1) % frame_skip == 0:
+                confidence= (numbots - BOTS_EXPECTED)*0.01 + confidence
+                print(f"Adjusted confidence to {confidence:.2f} based on {numbots} bots detected"  )
             
             # Write frame to output video
             out.write(frame)
@@ -355,11 +374,11 @@ def process_video_with_detection(input_video_path, output_video_path, model_path
 if __name__ == "__main__":
     # Configuration
     MODEL_PATH = "runs/detect/train2/weights/best.pt"
-    INPUT_VIDEO = "BZ-nhrl_dec25_3lb-projectliftoff3-jackalope-470f-Cage-6-Overhead-High.mp4"
+    INPUT_VIDEO = "BZ-nhrl_dec25_3lb-pinevictus-silentspring-W-11-Cage-2-Overhead-High.mp4"
     OUTPUT_VIDEO = INPUT_VIDEO + "_output_tracked0.1.mp4"
-    FRAME_SKIP = 120
-    SCALE_FACTOR = 0.3
-    CONFIDENCE = 0.6
+    FRAME_SKIP = 10
+    SCALE_FACTOR = 0.5
+    CONFIDENCE = 0.75
     
     if len(sys.argv) > 1:
         INPUT_VIDEO = sys.argv[1]
@@ -384,8 +403,8 @@ if __name__ == "__main__":
         print("Download your Roboflow model as a YOLO format .pt file")
         sys.exit(1)
     
-    process_video_with_detection(INPUT_VIDEO, OUTPUT_VIDEO, MODEL_PATH, 
-                                FRAME_SKIP, SCALE_FACTOR, CONFIDENCE)
+    # process_video_with_detection(INPUT_VIDEO, OUTPUT_VIDEO, MODEL_PATH, 
+    #                             FRAME_SKIP, SCALE_FACTOR, CONFIDENCE)
     
     start_time = time.perf_counter() # Record the start time
     process_video_with_detection(INPUT_VIDEO, OUTPUT_VIDEO, MODEL_PATH, 
